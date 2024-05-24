@@ -1,23 +1,23 @@
 .MODEL large
 .STACK 64
 .DATA
-SCREENCELLSCOUNT equ 2080       ; number of cells 
+cellsCount equ 2080             ; total number of cells in the game grid
 backgroundColor equ 02h         ; background color
-PlayerColor equ 7               ; player color (carabao)
-playerPos dw  3920              ; initial player
-redTilessPos dw  390, 780, 1010, 1240, 1310, 1700, 1930, 2160, 2390, 2620, 2850, 3080, 3310, 3540, 3770         ; red tiles position
-initialTilesPos dw 390, 780, 1010, 1240, 1310, 1700, 1930, 2160, 2390, 2620, 2850, 3080, 3310, 3540, 3770       ; positions of rectangles
-redTilesMovement dw -8, 6, 8, -4, 4, 4, -4, -4, 2, 6, -4, -4, 8, 2, 2                                           ; rectangles speed
-redTilesLowLimits dw  320, 640, 960, 1120, 1280, 1600, 1920, 2080, 2240, 2560, 2720, 3040, 3200, 3520, 3680     ; minimum limits of rectangle
-redTilesHighLimits dw  476, 796, 1116, 1276, 1436, 1756, 2076, 2236, 2396, 2716, 2876, 3196, 3356, 3676, 3836   ; maximum limits of rectangle
-currentDeciSec db ?             ; the current decisecond (tenths of a second) needed for rectangle movement calculations
-currentSec db ?                 ; the current second
-gameScore db 0                  ; player's score
-playerWasOnWhiteTile db 0       ; indicates if the player was on a white tile
-PlayerPress db ?                ; the key that the player pressed (scancode)
-yellowLinePos db 0              ; position of the yellow line (target), where 0 means it is at the top and 1 means it is at the bottom
-MilliSecSpeed db 6              ; initial value responsible for the speed of the rectangles
-lastFourMultipleScore db 0      ; used in speed increase calculations for the rectangles, recording the last score that was a multiple of four
+playerColor equ 7               ; player color (carabao)
+playerPosition dw  3920         ; player's starting position in the game
+obstaclePosition dw  390, 780, 1010, 1240, 1310, 1700, 1930, 2160, 2390, 2620, 2850, 3080, 3310, 3540, 3770         ; obstacle position
+logPosition dw       390, 780, 1010, 1240, 1310, 1700, 1930, 2160, 2390, 2620, 2850, 3080, 3310, 3540, 3770         ; log position
+obstacleMovement dw -8, 6, 8, -4, 4, 4, -4, -4, 2, 6, -4, -4, 8, 2, 2                                               ; direction of each obstacle
+obtacleLowLimits dw  320, 640, 960, 1120, 1280, 1600, 1920, 2080, 2240, 2560, 2720, 3040, 3200, 3520, 3680          
+obstacleHighLimits dw  476, 796, 1116, 1276, 1436, 1756, 2076, 2236, 2396, 2716, 2876, 3196, 3356, 3676, 3836       
+currentDeciSec db ?             
+currentSec db ?                 
+gameScore db 0                  
+playerHitLog db 0               
+playerPress db ?                
+waterPosition db 0              ; position of the water
+MilliSecSpeed db 6              
+lastFourMultipleScore db 0      
 collisionDetected db 0          ; used to detect collisions when the player moves
 
 .code
@@ -32,17 +32,17 @@ MAIN PROC FAR
     JMP InitializeGame
 
 RetryGameSelected:      ; Executed when the "retry game" option is selected
-    CALL FAR PTR RetryGameInitializations
+    CALL FAR PTR retryGame
 
 InitializeGame:         ; Draws the initial game scene
-    CALL FAR PTR initScene
+    CALL FAR PTR initialGameScreen
 
 GameLoop:
-; Here we calculate the time change to move the red rectangles as follows:
-        ; If the seconds are different (the current second and the recorded second), we move the rectangles.
-        ; If the seconds are the same, we compare the fraction of a second.
-        ; If the difference is greater than 600 milliseconds, we move the rectangles.
-        ; The fraction of a second (MilliSecSpeed) controls the speed.
+; Here we calculate the time change to move the obstacle as follows:
+        ; If the seconds are different (the current second and the recorded second), we move the obstacle
+        ; If the seconds are the same, we compare the fraction of a second
+        ; If the difference is greater than 600 milliseconds, we move the obstacle
+        ; The fraction of a second (MilliSecSpeed) controls the speed
 
 CheckTileMovement:
     mov ah, 2Ch          ; Get the current time
@@ -61,12 +61,12 @@ CheckTileMovement:
 MoveTheTiles:
     mov currentDeciSec, dl ; Save the new fraction of a second
     mov currentSec, dh     ; Save the new second
-    call far ptr MoveAllTiles ; Call the routine to move all tiles
+    call far ptr movingObstacle ; Call the routine to move all tiles
 
 checkingCollision:
         ; Here we check if the player has collided with the moving deadly rectangles by doing the following:
         ; If the color at the cell (center) of the player is red
-    mov si, playerPos         ; Load player position into SI
+    mov si, playerPosition         ; Load player position into SI
     mov al, es:[si+1]         ; Get the color at the player's position
     cmp al, BYTE PTR 0h       ; Compare it with the red color (assuming 0h is red)
     jne CheckForUserInput     ; If it's not red, continue to check for user input
@@ -79,7 +79,7 @@ CheckForUserInput:
     mov ax, 0
     mov ah, 1             ; Check if a key has been pressed
     int 16h               ; BIOS keyboard interrupt
-    mov PlayerPress, ah   ; Store the key press in PlayerPress
+    mov playerPress, ah   ; Store the key press in PlayerPress
     jnz GetUserInput      ; If a key was pressed, jump to GetUserInput
 
     jmp CHECKYELLOW       ; Otherwise, jump to CHECKYELLOW
@@ -108,17 +108,17 @@ CheckArrowUP:
         ; Check if the up arrow key was pressed
         ; If pressed, ensure the move is valid (i.e., does not move the player out of screen bounds)
         ; If the player's center is past the first two rows of the screen, the player can move up
-    cmp PlayerPress, 48h      ; Compare with the up arrow key code (assuming 48h is the up arrow key)
+    cmp playerPress, 48h      ; Compare with the up arrow key code (assuming 48h is the up arrow key)
     jne CheckArrowDown        ; If not, jump to CheckArrowDown
 
 CheckUpValidMove:
-    mov ax, playerPos         ; Load player position
+    mov ax, playerPosition         ; Load player position
     cmp ax, BYTE PTR 320      ; Compare with the boundary (assuming 320 is the boundary value)
     jb DisapproveUpMove       ; If the player is above the boundary, disapprove the move
 
-    mov di, playerPos         ; Load player position into DI
+    mov di, playerPosition         ; Load player position into DI
     sub di, 160               ; Subtract 160 to move the player up
-    call far ptr MovePlayer   ; Call the routine to move the player
+    call far ptr collisionPlayer  ; Call the routine to move the player
 
 DisapproveUpMove:
     jmp consumeTheLetter      ; Remove the key press from the keyboard queue
@@ -131,13 +131,13 @@ CheckArrowDown:
     jne CheckArrowLeft         ; If not, jump to CheckArrowLeft
 
 CheckDownValidMove:
-    mov ax, playerPos          ; Load player position
+    mov ax, playerPosition         ; Load player position
     cmp ax, WORD PTR 3840      ; Compare with the boundary (assuming 3840 is the boundary value)
     jae DisapproveDownMove     ; If the player is below the boundary, disapprove the move
 
-    mov di, playerPos          ; Load player position into DI
+    mov di, playerPosition         ; Load player position into DI
     add di, 160                ; Add 160 to move the player down
-    call far ptr MovePlayer    ; Call the routine to move the player
+    call far ptr collisionPlayer    ; Call the routine to move the player
 
 DisapproveDownMove:
     jmp consumeTheLetter       ; Remove the key press from the keyboard queue
@@ -146,20 +146,20 @@ CheckArrowLeft:
         ; Check if the left arrow key was pressed
         ; If pressed, ensure the move is valid (i.e., does not move the player out of screen bounds)
         ; If the player's center is not at multiples of 160, the player cannot move left
-    cmp PlayerPress, 4Bh       ; Compare with the left arrow key code (assuming 4Bh is the left arrow key)
+    cmp playerPress, 4Bh       ; Compare with the left arrow key code (assuming 4Bh is the left arrow key)
     jne CheckArrowRight         ; If not, jump to CheckArrowRight
 
 CheckLeftValidMove:
-    mov ax, playerPos          ; Load player position
+    mov ax, playerPosition         ; Load player position
     mov dl, 160                ; Load 160 into DL (row size)
     div dl                     ; Divide AX (player position) by DL (row size)
     mov dl, ah                 ; Move the remainder (AH) to DL
     cmp dl, 0                  ; Compare with 0 to check if it's at multiples of 160
     je DisapproveLeftMove      ; If it's at multiples of 160, disapprove the move
 
-    mov di, playerPos          ; Load player position into DI
+    mov di, playerPosition         ; Load player position into DI
     sub di, BYTE PTR 2         ; Subtract 2 to move the player left
-    call far ptr MovePlayer    ; Call the routine to move the player
+    call far ptr collisionPlayer    ; Call the routine to move the player
 
 DisapproveLeftMove:
     jmp consumeTheLetter       ; Remove the key press from the keyboard queue
@@ -168,11 +168,11 @@ CheckArrowRight:
         ; Check if the right arrow key was pressed
         ; If pressed, ensure the move is valid (i.e., does not move the player out of screen bounds)
         ; If the player is at center position number 158 of any row, the player cannot move right
-    cmp PlayerPress, 4Dh           ; Compare with the right arrow key code (assuming 4Dh is the right arrow key)
+    cmp playerPress, 4Dh           ; Compare with the right arrow key code (assuming 4Dh is the right arrow key)
     jne consumeTheLetter           ; If not, it means a key other than the four arrow keys was pressed, so consume the letter
 
 CheckRightValidMove:
-    mov ax, playerPos              ; Load player position
+    mov ax, playerPosition              ; Load player position
     cmp ax, 158                    ; Compare with the position 158
     je DisapproveRightMove         ; If at position 158, disapprove the move
     cmp ax, 158                    ; Check if below position 158
@@ -186,9 +186,9 @@ CheckRightValidMove:
     je DisapproveRightMove         ; If multiple of 160, disapprove the move
 
 approveRightMove:
-    mov di, playerPos              ; Load player position into DI
+    mov di, playerPosition             ; Load player position into DI
     add di, BYTE PTR 2             ; Add 2 to move the player right
-    call far ptr MovePlayer        ; Call the routine to move the player
+    call far ptr collisionPlayer        ; Call the routine to move the player
 
 DisapproveRightMove:
     ; No action needed, just mark the end of the disapproved move section
@@ -210,8 +210,8 @@ CHECKYELLOW:
         ; Check if the player has reached the yellow line
         ; If so, draw the yellow line on the opposite side, increase the game score
         ; and change the speed of the moving rectangles
-    mov ax, playerPos          ; Load player position into AX
-    cmp yellowLinePos, 0       ; Compare with 0 to determine if the yellow line is at the top or bottom
+    mov ax, playerPosition        ; Load player position into AX
+    cmp waterPosition, 0       ; Compare with 0 to determine if the yellow line is at the top or bottom
     jne YellowIsAtTheBottom    ; If not 0, jump to YellowIsAtTheBottom
 
 YellowIsAtTheTop:
@@ -221,7 +221,7 @@ YellowIsAtTheTop:
 
 YesHeReachedYellowTop:
     inc gameScore              ; Increase the game score
-    call far ptr drawYellowLine; Draw the yellow line at the bottom and erase it from the top
+    call far ptr drawWaterLine ; Draw the yellow line at the bottom and erase it from the top
     jmp CheckSpeed             ; Jump to CheckSpeed
 
 YellowIsAtTheBottom:
@@ -231,7 +231,7 @@ YellowIsAtTheBottom:
 
 YesHeReachedYellowBottom:
     inc gameScore              ; Increase the game score
-    call far ptr drawYellowLine; Draw the yellow line at the top and erase it from the bottom
+    call far ptr drawWaterLine ; Draw the yellow line at the top and erase it from the bottom
 
 CheckSpeed:
     ; Redraw the player
@@ -267,7 +267,7 @@ continueGameLoop:
 
 gameOver:
     ; Draw the game over message
-    call far ptr drawGameOverMsg
+    call far ptr drawGameOver
 
 gameOverWait:
         ; Wait for player action: retry or exit
@@ -302,9 +302,9 @@ exit:
 
 MAIN    ENDP
 
-initScene PROC FAR
+initialGameScreen PROC FAR
     ; Set black background for the entire screen
-    mov cx, WORD PTR SCREENCELLSCOUNT   ; Number of cells
+    mov cx, WORD PTR cellsCount  ; Number of cells
     mov di, 00h                         ; Point to the first cell
 
 DrawGreySCREEN:
@@ -334,30 +334,19 @@ drawGoalLineOne:
     loop drawGoalLineOne                 ; Repeat for the next cell until cx (loop counter) becomes zero
 
     ; Draw the white stripes on the road
-    call far ptr DrawWhiteStripes
-
-    ; Draw a certain number of red danger cells (10 cells) in random positions
-    ; The positions are determined using a code found in the subProcedure "getCellsPos"
-    ; This is executed only once during game programming and will never be executed again
-    ; It was used only to determine random positions
-    call far ptr DrawRedCells
-
+    call far ptr drawLog
     ; Draw the player, represented as a blue cell
     call far ptr DrawPlayer
 
     ; Initialize the timer to keep track of seconds and hundredths of a second
     ; for use in moving the deadly red cells
-    call far ptr initTimer
+    call far ptr gameTimer
     ret         ; Return from the procedure
 
-initScene ENDP
+initialGameScreen ENDP
 
-drawSingleStripe PROC FAR
+drawObstacle PROC FAR
     ; Draw a single stripe of white color on a black background
-    ; Parameters:
-    ;   CX: Number of cells per stripe (length of the stripe)
-    ;   BX: End point of the stripe in the row
-    ;   DI: Current position in the row
 
     push cx         ; Preserve CX register
     push bx         ; Preserve BX register
@@ -379,9 +368,9 @@ exitDSS:
     pop cx          ; Restore CX register
     ret             ; Return from the drawSingleStripe procedure
 
-drawSingleStripe ENDP
+drawObstacle ENDP
 
-drawSquare PROC FAR
+drawObstacles PROC FAR
     ; Draw a square in four cells starting from the address in DI
     ; Each cell consists of two bytes: one for the ASCII character and one for the color
 
@@ -399,7 +388,7 @@ drawSquare PROC FAR
 
     ret ; Return from the procedure
 
-drawSquare ENDP
+drawObstacles ENDP
 
 
 drawScore PROC FAR
@@ -419,54 +408,55 @@ drawScore PROC FAR
     add al, '0'             ; Convert units digit to ASCII
 
     ; Draw the score label
-    mov es:[0], BYTE PTR 'S'       ; Draw 'S'
-    mov es:[1], BYTE PTR 0Ah       ; Set the color to green on black background
-    mov es:[2], BYTE PTR 'C'       ; Draw 'C'
-    mov es:[3], BYTE PTR 0Ah       ; Set the color to green on black background
-    mov es:[4], BYTE PTR 'O'       ; Draw 'O'
-    mov es:[5], BYTE PTR 0Ah       ; Set the color to green on black background
-    mov es:[6], BYTE PTR 'R'       ; Draw 'R'
-    mov es:[7], BYTE PTR 0Ah       ; Set the color to green on black background
-    mov es:[8], BYTE PTR 'E'       ; Draw 'E'
-    mov es:[9], BYTE PTR 0Ah       ; Set the color to green on black background
+    mov es:[0], BYTE PTR 'I'       ; Draw 'S'
+    mov es:[1], BYTE PTR 0Eh       ; Set the color to green on black background
+    mov es:[2], BYTE PTR 'S'       ; Draw 'C'
+    mov es:[3], BYTE PTR 0Eh        ; Set the color to green on black background
+    mov es:[4], BYTE PTR 'K'       ; Draw 'O'
+    mov es:[5], BYTE PTR 0Eh        ; Set the color to green on black background
+    mov es:[6], BYTE PTR 'O'       ; Draw 'R'
+    mov es:[7], BYTE PTR 0Eh        ; Set the color to green on black background
+    mov es:[8], BYTE PTR 'R'       ; Draw 'E'
+    mov es:[9], BYTE PTR 0Eh        ; Set the color to green on black background
     mov es:[10], BYTE PTR ':'      ; Draw ':'
-    mov es:[11], BYTE PTR 0Ah      ; Set the color to green on black background
+    mov es:[11], BYTE PTR 0Eh       ; Set the color to green on black background
     mov es:[12], BYTE PTR ' '      ; Draw a space
-    mov es:[13], BYTE PTR 0Ah      ; Set the color to green on black background
+    mov es:[13], BYTE PTR 0Eh       ; Set the color to green on black background
     mov es:[14], al                ; Draw units digit of the score
-    mov es:[15], BYTE PTR 0Ah      ; Set the color to green on black background
+    mov es:[15], BYTE PTR 0Eh       ; Set the color to green on black background
     mov es:[16], ah                ; Draw tens digit of the score
-    mov es:[17], BYTE PTR 0Ah      ; Set the color to green on black background
+    mov es:[17], BYTE PTR 0Eh      ; Set the color to green on black background
 
     ; Draw the quit message
-    mov es:[108], BYTE PTR 'Q'     ; Draw 'Q'
-    mov es:[109], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[110], BYTE PTR ':'     ; Draw ':'
-    mov es:[111], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[112], BYTE PTR 'Q'     ; Draw 'Q'
-    mov es:[113], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[114], BYTE PTR 'U'     ; Draw 'U'
-    mov es:[115], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[116], BYTE PTR 'I'     ; Draw 'I'
-    mov es:[117], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[118], BYTE PTR 'T'     ; Draw 'T'
-    mov es:[119], BYTE PTR 0Ah     ; Set the color to green on black background
+    mov es:[120], BYTE PTR 'Q'     ; Draw 'Q'
+    mov es:[121], BYTE PTR 0Ah     ; Set the color to green on black background
+    mov es:[122], BYTE PTR ':'     ; Draw ':'
+    mov es:[123], BYTE PTR 0Ah     ; Set the color to green on black background
+    mov es:[124], BYTE PTR 'Q'     ; Draw 'Q'
+    mov es:[125], BYTE PTR 0Ah     ; Set the color to green on black background
+    mov es:[126], BYTE PTR 'U'     ; Draw 'U'
+    mov es:[127], BYTE PTR 0Ah     ; Set the color to green on black background
+    mov es:[128], BYTE PTR 'I'     ; Draw 'I'
+    mov es:[129], BYTE PTR 0Ah     ; Set the color to green on black background
+    mov es:[130], BYTE PTR 'T'     ; Draw 'T'
+    mov es:[131], BYTE PTR 0Ah     ; Set the color to green on black background
+
 
     ; Draw the retry message
-    mov es:[126], BYTE PTR 'R'     ; Draw 'R'
-    mov es:[127], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[128], BYTE PTR ':'     ; Draw ':'
-    mov es:[129], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[130], BYTE PTR 'R'     ; Draw 'R'
-    mov es:[131], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[132], BYTE PTR 'E'     ; Draw 'E'
-    mov es:[133], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[134], BYTE PTR 'T'     ; Draw 'T'
+    mov es:[134], BYTE PTR 'R'     ; Draw 'R'
     mov es:[135], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[136], BYTE PTR 'R'     ; Draw 'R'
+    mov es:[136], BYTE PTR ':'     ; Draw ':'
     mov es:[137], BYTE PTR 0Ah     ; Set the color to green on black background
-    mov es:[138], BYTE PTR 'Y'     ; Draw 'Y'
+    mov es:[138], BYTE PTR 'R'     ; Draw 'R'
     mov es:[139], BYTE PTR 0Ah     ; Set the color to green on black background
+    mov es:[140], BYTE PTR 'E'     ; Draw 'E'
+    mov es:[141], BYTE PTR 0Ah     ; Set the color to green on black background
+    mov es:[142], BYTE PTR 'T'     ; Draw 'T'
+    mov es:[143], BYTE PTR 0Ah     ; Set the color to green on black background
+    mov es:[144], BYTE PTR 'R'     ; Draw 'R'
+    mov es:[145], BYTE PTR 0Ah     ; Set the color to green on black background
+    mov es:[146], BYTE PTR 'Y'     ; Draw 'Y'
+    mov es:[147], BYTE PTR 0Ah     ; Set the color to green on black background
 
     pop bx      ; Restore BX register
     pop ax      ; Restore AX register
@@ -474,58 +464,44 @@ drawScore PROC FAR
 
 drawScore ENDP
 
-drawGameOverMsg PROC FAR
+drawGameOver PROC FAR
     ; Draw the game over message
 
-    mov es:[68], BYTE PTR 'G'      ; Draw 'G'
+    mov es:[68], BYTE PTR 'H'      ; Draw 'G'
     mov es:[69], BYTE PTR 0Ch      ; Set the color to red on black background
     mov es:[70], BYTE PTR 'A'      ; Draw 'A'
     mov es:[71], BYTE PTR 0Ch      ; Set the color to red on black background
-    mov es:[72], BYTE PTR 'M'      ; Draw 'M'
+    mov es:[72], BYTE PTR 'H'      ; Draw 'M'
     mov es:[73], BYTE PTR 0Ch      ; Set the color to red on black background
-    mov es:[74], BYTE PTR 'E'      ; Draw 'E'
+    mov es:[74], BYTE PTR 'A'      ; Draw 'E'
     mov es:[75], BYTE PTR 0Ch      ; Set the color to red on black background
     mov es:[76], BYTE PTR ' '      ; Draw a space
     mov es:[77], BYTE PTR 0Ch      ; Set the color to red on black background
-    mov es:[78], BYTE PTR 'O'      ; Draw 'O'
+    mov es:[78], BYTE PTR 'K'      ; Draw 'O'
     mov es:[79], BYTE PTR 0Ch      ; Set the color to red on black background
-    mov es:[80], BYTE PTR 'V'      ; Draw 'V'
+    mov es:[80], BYTE PTR 'A'      ; Draw 'V'
     mov es:[81], BYTE PTR 0Ch      ; Set the color to red on black background
-    mov es:[82], BYTE PTR 'E'      ; Draw 'E'
+    mov es:[82], BYTE PTR 'W'      ; Draw 'E'
     mov es:[83], BYTE PTR 0Ch      ; Set the color to red on black background
-    mov es:[84], BYTE PTR 'R'      ; Draw 'R'
+    mov es:[84], BYTE PTR 'A'      ; Draw 'R'
     mov es:[85], BYTE PTR 0Ch      ; Set the color to red on black background
-    mov es:[86], BYTE PTR ' '      ; Draw a space
+    mov es:[86], BYTE PTR 'W'      ; Draw a space
     mov es:[87], BYTE PTR 0Ch      ; Set the color to red on black background
-    mov es:[88], BYTE PTR ':'      ; Draw ':'
-    mov es:[89], BYTE PTR 0Ch      ; Set the color to red on black background
-    mov es:[90], BYTE PTR '('      ; Draw '('
+    mov es:[88], BYTE PTR 'A'      ; Draw ':'
+    mov es:[89], BYTE PTR 0Ch  
+    mov es:[90], BYTE PTR ' '      ; Draw a space
     mov es:[91], BYTE PTR 0Ch      ; Set the color to red on black background
+    mov es:[92], BYTE PTR ':'      ; Draw ':'
+    mov es:[93], BYTE PTR 0Ch      ; Set the color to red on black background
+    mov es:[94], BYTE PTR '('      ; Draw '('
+    mov es:[95], BYTE PTR 0Ch      ; Set the color to red on black background
 
     ret         ; Return from the procedure
 
-drawGameOverMsg ENDP
+drawGameOver ENDP
 
-DrawRedCells PROC FAR
-    ; Draw the deadly red cells on the screen
-
-    mov cx, 15                     ; Number of red cells to draw (15 in total)
-    mov bx, offset redTilessPos    ; Set bx to the address of the first red cell position
-
-drawDeathRedCellsLoop:
-    mov di, [bx]                   ; Load the position of the red cell into di
-    call far ptr drawSquare        ; Draw a red cell at the current position
-
-    add bx, BYTE PTR 2             ; Move to the next red cell position
-    loop drawDeathRedCellsLoop     ; Repeat for all red cells
-
-    ret                            ; Return from the procedure
-
-DrawRedCells ENDP
-
-DrawWhiteStripes PROC FAR
-    ; Draw the white stripes on the road
-    ; They are located in odd rows
+drawLog PROC FAR
+    ; Draw the logs on the farm
 
     mov cx, BYTE PTR 17    ; Number of odd rows
     mov bx, 486            ; Initial position of the first white stripe in row 4
@@ -535,7 +511,7 @@ drawStripesLoop:
     mov dx, BYTE PTR 5     ; Number of white stripes in each row
 
 drawRowStripesLoop:
-    call far ptr drawSingleStripe       ; Draw a single white stripe
+    call far ptr drawObstacle      ; Draw a single white stripe
     add di, BYTE PTR 18                 ; Move to the next position for the next stripe
     dec dx                              ; Decrement the stripe counter
     jnz drawRowStripesLoop              ; Continue drawing stripes in the row until done
@@ -546,31 +522,31 @@ drawRowStripesLoop:
 
     ret                    ; Return from the procedure
 
-DrawWhiteStripes ENDP
+drawLog  ENDP
 
-DrawPlayer PROC FAR
-    ; Draw the player
+drawPlayer PROC FAR
+    ; Draw the carabao
 
     push di                             ; Save the current value of di to avoid unexpected results
-    mov di, playerPos                   ; Set di to the player's position
+    mov di, playerPosition                   ; Set di to the player's position
     mov es:[di], BYTE PTR 219           ; Draw the player character
     mov es:[di+1], BYTE PTR 08h         ; Set the color to blue on black
     pop di                              ; Restore the original value of di
     ret                                 ; Return from the procedure
 
-DrawPlayer ENDP
+drawPlayer ENDP
 
-MoveAllTiles PROC far
-    ; Move all red tiles
+movingObstacle PROC far
+    ; Move all obstacle
 
     mov cx, 15              ; Number of red tiles
     MovingAllTiles:
-        mov bx, offset redTilessPos      ; Address of the red tiles' positions
+        mov bx, offset obstaclePosition       ; Address of the red tiles' positions
         mov ax, 15                       ; Set ax to 15
         sub ax, cx                       ; Calculate the offset for the current tile
         add bx, ax                       ; Move to the position of the current tile
         add bx, ax                       ; Multiply by 2 (each position is 2 bytes)
-        mov di, offset redTilesMovement  ; Address of movement values for red tiles
+        mov di, offset obstacleMovement  ; Address of movement values for red tiles
         add di, ax                       ; Move to the movement value of the current tile
         add di, ax                       ; Multiply by 2 (each movement value is 2 bytes)
         mov dx, [bx]                     ; Get the current position of the tile
@@ -578,7 +554,7 @@ MoveAllTiles PROC far
 
         ; Check if the new position is within boundaries
         checkLowBoundaries:
-            mov si, offset redTilesLowLimits   ; Address of lower boundaries for each tile
+            mov si, offset obtacleLowLimits   ; Address of lower boundaries for each tile
             add si, ax                         ; Move to the lower boundary of the current tile
             add si, ax                         ; Multiply by 2 (each boundary value is 2 bytes)
             cmp dx, ds:[si]                    ; Compare the new position with the lower boundary
@@ -586,7 +562,7 @@ MoveAllTiles PROC far
             jmp FailedBoundariesCheck          ; Otherwise, reverse direction
 
         checkHighBoundaries:
-            mov si, offset redTilesHighLimits  ; Address of upper boundaries for each tile
+            mov si, offset obstacleHighLimits  ; Address of upper boundaries for each tile
             add si, ax                         ; Move to the upper boundary of the current tile
             add si, ax                         ; Multiply by 2 (each boundary value is 2 bytes)
             cmp dx, ds:[si]                    ; Compare the new position with the upper boundary
@@ -611,7 +587,7 @@ MoveAllTiles PROC far
     returnMovingAllTiles:
         ret                                  ; Return from the procedure
 
-MoveAllTiles ENDP
+movingObstacle ENDP
 
 moveSingleTile PROC far
     ; Move a single red tile
@@ -632,13 +608,13 @@ moveSingleTile PROC far
     mov di, [bx]            ; Get the new position of the tile
 
     ; Draw the red tile at the new position
-    call far ptr drawSquare
+    call far ptr drawObstacles
 
     ret         ; Return from the procedure
 
 moveSingleTile ENDP
 
-initTimer PROC FAR
+gameTimer PROC FAR
     ; Get the current time
 
     mov ah, 2Ch         ; Function to get the system time
@@ -649,9 +625,9 @@ initTimer PROC FAR
 
     ret        ; Return from the procedure
 
-initTimer ENDP
+gameTimer ENDP
 
-MovePlayer PROC FAR
+collisionPlayer PROC FAR
     ; Check for collision
     mov al, es:[di+1]           ; Get the color of the cell the player is moving to
     cmp al, 0Ch                 ; Check if it's a collision color
@@ -660,9 +636,9 @@ MovePlayer PROC FAR
 NOCOLLISION:
 
     ; Move the player
-    mov si, playerPos           ; Get the current player position
+    mov si, playerPosition           ; Get the current player position
     mov al, 1                   ; Set a flag to compare with
-    cmp playerWasOnWhiteTile, 1 ; Check if the player was on a white tile background
+    cmp playerHitLog, 1 ; Check if the player was on a white tile background
     je drawWhiteBackgnd         ; If yes, then draw white background
     jmp drawNormalBackgnd       ; Otherwise, draw the normal background
 
@@ -678,42 +654,42 @@ drawWhiteBackgnd:
     mov es:[si+1], BYTE PTR 06h  ; Blue color on white background
 
 cont:
-    mov playerWasOnWhiteTile, 0  ; Reset the flag (not on white background anymore)
+    mov playerHitLog, 0  ; Reset the flag (not on white background anymore)
 
     ; Check if the new position is on a white background
     mov al, es:[di+1]            ; Get the color of the cell the player is moving to
     cmp al, 06h                  ; Check if it's white
     jne NotAWhite                ; If not, skip setting the flag
-    mov playerWasOnWhiteTile, 1  ; Set the flag indicating the player is on a white tile
+    mov playerHitLog, 1  ; Set the flag indicating the player is on a white tile
 
 NotAWhite:
     ; Draw the player
     mov es:[di], BYTE PTR 219     ; ASCII character
     mov es:[di+1], BYTE PTR 01h   ; Blue color on black background
-    mov playerPos, di             ; Save the new player position
+    mov playerPosition, di             ; Save the new player position
 
     ret       ; Return from the procedure
 
-MovePlayer ENDP
+collisionPlayer ENDP
 
-drawYellowLine PROC FAR
-    ; Compare if the yellow line is at the top or bottom
+drawWaterLine PROC FAR
+    ; Compare if the water is at the top or bottom
 
-    cmp yellowLinePos, 0
+    cmp waterPosition, 0
     jne ItsAtButtom  ; If not, it's at the bottom
 
 ItsAtTop:
     ; Move the yellow line from top to bottom
     mov si, WORD PTR 160     ; Get the old position of the yellow line (first cell)
     mov di, WORD PTR 3840    ; Get the new position of the yellow line (first cell)
-    mov yellowLinePos, 1     ; Set the yellow line at the bottom
+    mov waterPosition, 1     ; Set the yellow line at the bottom
     jmp REMOVWDRAWYELLOW     ; Jump to remove and draw the yellow line
 
 ItsAtButtom:
     ; Move the yellow line from bottom to top
     mov si, WORD PTR 3840    ; Get the old position of the yellow line (first cell)
     mov di, WORD PTR 160     ; Get the new position of the yellow line (first cell)
-    mov yellowLinePos, 0     ; Set the yellow line at the top
+    mov waterPosition, 0     ; Set the yellow line at the top
 
 REMOVWDRAWYELLOW:
     ; Remove the yellow line from its previous position
@@ -736,9 +712,9 @@ drawYellow:
 
     ret
 
-drawYellowLine ENDP
+drawWaterLine ENDP
 
-getCellsPos PROC FAR
+getObstaclePosition PROC FAR
     ; Initialize di to the start of the first red cell position
 
     mov di, 480        ; Start of the first red cell position
@@ -780,21 +756,21 @@ itsEvenContinueItsOK:
     sub bx, cx
     mov ax, bx
     add bx, ax              ; Convert word to byte
-    add bx, offset redTilessPos  ; Get the position of the red cell
+    add bx, offset obstaclePosition   ; Get the position of the red cell
     mov ds:[bx], di         ; Save the position of the red cell
     add di, WORD PTR 160    ; Move to the next row
     loop GetRandomRedDeathCells
 
     ret
 
-getCellsPos ENDP
+getObstaclePosition ENDP
 
-RetryGameInitializations PROC FAR
+retryGame PROC FAR
     ; Reset the positions of the red tiles to their initial positions
 
     mov cx, 15                  ; Number of red tiles
-    mov di, offset initialTilesPos  ; Start of initial tile positions
-    mov si, offset redTilessPos    ; Start of red tile positions
+    mov di, offset logPosition  ; Start of initial tile positions
+    mov si, offset obstaclePosition     ; Start of red tile positions
 
 reInitializeGamePos:
     mov ax, [di]                ; Get initial tile position
@@ -804,9 +780,9 @@ reInitializeGamePos:
     loop reInitializeGamePos    ; Loop for all tiles
 
     ; Reset other game variables to their initial values
-    mov playerPos, 3920         ; Initial player position
-    mov playerWasOnWhiteTile, 0 ; Player was not on white tile initially
-    mov yellowLinePos, 0h       ; Yellow line position initially at top
+    mov playerPosition, 3920         ; Initial player position
+    mov playerHitLog, 0 ; Player was not on white tile initially
+    mov waterPosition, 0h       ; Yellow line position initially at top
     mov MilliSecSpeed, 6        ; Initial millisecond speed
     mov lastFourMultipleSCore, 0; Initial score multiple
     mov gameScore, 0            ; Reset game score
@@ -814,6 +790,6 @@ reInitializeGamePos:
 
     ret
 
-RetryGameInitializations ENDP
+retryGame ENDP
 
 END MAIN
