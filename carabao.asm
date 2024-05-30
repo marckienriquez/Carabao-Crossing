@@ -19,7 +19,12 @@ waterPosition db 0              ; position of the water
 MilliSecSpeed db 6              
 lastFourMultipleScore db 0      
 collisionDetected db 0          ; used to detect collisions when the player moves
+text_main_menu_title DB 00h, 00h, 0fh, 0fh, 04h ;MAIN MENU Text_Main_Menu_Title
+text_main_menu_playgame DB 'PLAY GAME: Press P', '$' ;Press P To Start 
+text_main_menu_instruction DB 'INSTRUCTION: Press I', '$' ; I for INSTRUCTION
+text_main_menu_exit DB 'EXIT: Press E:', '$' ; E FOR TANGINA
 
+current_screen DB 0	;Index for current scene(0 - MAIN MENU, 1 - GAME)
 .code
 MAIN PROC FAR
     MOV AX, @DATA
@@ -35,7 +40,17 @@ RetryGameSelected:      ; Executed when the "retry game" option is selected
     CALL FAR PTR retryGame
 
 InitializeGame:         ; Draws the initial game scene
-    CALL FAR PTR initialGameScreen
+	CALL CLEAR_SCREEN
+	CMP current_screen, 00h
+	JE show_main_menu
+	JMP show_game
+	
+show_main_menu:
+	CALL DRAW_MAIN_MENU
+		
+show_game:
+	CALL FAR PTR initialGameScreen
+    
 
 GameLoop:
 ; Here we calculate the time change to move the obstacle as follows:
@@ -300,12 +315,111 @@ exit:
         MOV AL, 0       ; Error code
         INT 21h         ; Interrupt 21h - DOS General Interrupts
 
+	
 MAIN    ENDP
 
+DRAW_MAIN_MENU PROC NEAR
+	CALL CLEAR_SCREEN
+;		Shows the menu title
+		MOV AH,02h                       ;set cursor position
+		MOV BH,00h                       ;set page number
+		MOV DH,04h                       ;set row 
+		MOV DL,04h						 ;set column
+		INT 10h							 
+		
+		MOV AH,09h                       ;WRITE STRING TO STANDARD OUTPUT
+		LEA DX, text_main_menu_title      ;give DX a pointer 
+		INT 21h                          ;print the string
+
+;	PLAY GAME 
+		MOV AH,02h                       ;set cursor position
+		MOV BH,00h                       ;set page number
+		MOV DH,06h                       ;set row 
+		MOV DL,04h						 ;set column
+		INT 10h							 
+		
+		MOV AH,09h                       ;WRITE STRING TO STANDARD OUTPUT
+		LEA DX, text_main_menu_playgame     ;give DX a pointer 
+		INT 21h                          ;print the string
+;	INSTRUCTION 
+		MOV AH,02h                       ;set cursor position
+		MOV BH,00h                       ;set page number
+		MOV DH,08h                       ;set row 
+		MOV DL,04h						 ;set column
+		INT 10h							 
+		
+		MOV AH,09h                       ;WRITE STRING TO STANDARD OUTPUT
+		LEA DX, text_main_menu_instruction    ;give DX a pointer 
+		INT 21h                          ;print the string
+;	EXIT
+		MOV AH,02h                       ;set cursor position
+		MOV BH,00h                       ;set page number
+		MOV DH,0Ah                       ;set row 
+		MOV DL,04h						 ;set column
+		INT 10h							 
+		
+		MOV AH,09h                       ;WRITE STRING TO STANDARD OUTPUT
+		LEA DX, text_main_menu_exit      ;give DX a pointer 
+		INT 21h                          ;print the string
+		
+;	WAIT FOR USER INPUT 
+		MOV AH, 00h
+		INT 16h
+		
+	MAIN_MENU_WAIT_FOR_KEY:
+;       Waits for a key press
+			MOV AH,00h
+			INT 16h
+		
+;       Check whick key was pressed
+			CMP AL,'P'
+			JE start_game
+			CMP AL,'p'
+			JE start_game
+			CMP AL,'I'
+			JE start_instruction
+			CMP AL,'i'
+			JE start_instruction
+			CMP AL,'E'
+			JE exit_game
+			CMP AL,'e'
+			JE exit_game
+			JMP MAIN_MENU_WAIT_FOR_KEY
+			
+		start_game:
+			MOV current_screen,01h
+			RET
+		
+		start_instruction:
+			JMP MAIN_MENU_WAIT_FOR_KEY ;TODO
+		
+		EXIT_GAME:
+			JMP MAIN_MENU_WAIT_FOR_KEY ;TODO
+		
+	RET
+DRAW_MAIN_MENU ENDP
+
+CLEAR_SCREEN PROC NEAR               ;clear the screen by restarting the video mode
+	
+			MOV AH,00h                   ;set the configuration to video mode
+			MOV AL,03h                   ;choose the video mode
+			INT 10h    					 ;execute the configuration 
+		
+			MOV AH,0Bh 					 ;set the configuration
+			MOV BH,00h 					 ;to the background color
+			MOV BL,00h 					 ;choose black as background color
+			INT 10h    					 ;execute the configuration
+			
+			RET
+			
+CLEAR_SCREEN ENDP
+	
 initialGameScreen PROC FAR
     ; Set black background for the entire screen
+	CALL CLEAR_SCREEN
     mov cx, WORD PTR cellsCount  ; Number of cells
     mov di, 00h                         ; Point to the first cell
+	
 
 DrawGreySCREEN:
     mov es:[di], BYTE PTR 219               ; ASCII character
@@ -371,20 +485,16 @@ exitDSS:
 drawObstacle ENDP
 
 drawObstacles PROC FAR
-    ; Draw a square in four cells starting from the address in DI
-    ; Each cell consists of two bytes: one for the ASCII character and one for the color
 
     mov es:[di], BYTE PTR 178   ; Draw a solid block
     mov es:[di+1], BYTE PTR 0h  ; Set the color to black
 
     mov es:[di+2], BYTE PTR 178 ; Draw a solid block
-    mov es:[di+3], BYTE PTR 0h  ; Set the color to black
+    mov es:[di+3], BYTE PTR 0Eh  ; Set the color to black
 
-    mov es:[di+4], BYTE PTR 178 ; Draw a solid block
+    mov es:[di+4], BYTE PTR 178   ; Draw a solid block
     mov es:[di+5], BYTE PTR 0h  ; Set the color to black
-
-    mov es:[di+6], BYTE PTR 178 ; Draw a solid block
-    mov es:[di+7], BYTE PTR 0h  ; Set the color to black
+   
 
     ret ; Return from the procedure
 
